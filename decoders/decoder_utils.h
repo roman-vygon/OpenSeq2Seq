@@ -54,7 +54,7 @@ T log_sub_exp(const T& x, const T& y) {
         // error!! computing the log of a negative number
         if (y == -std::numeric_limits<T>::max())
             return x;
-    return x + log1p(-exp(y - x));
+    return x + std::log1p(-std::exp(y - x));
 }
 // Return the product of two probabilities in log scale
 template <typename T>

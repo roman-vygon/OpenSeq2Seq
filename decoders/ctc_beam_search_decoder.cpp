@@ -123,7 +123,7 @@ std::vector<std::pair<double, std::string>> ctc_beam_search_decoder(
             std::vector<std::string> ngram;
             ngram = ext_scorer->make_ngram(prefix_to_score);
             score = ext_scorer->get_log_cond_prob(ngram) * ext_scorer->alpha;
-           
+
             log_p += score;
             log_p += ext_scorer->beta;
           }
@@ -232,7 +232,6 @@ std::vector<std::pair<double, std::string>> ctc_beam_search_kw_decoder(
     // prefix search over time
     for (size_t time_step = 0; time_step < num_time_steps; ++time_step) {
         auto& prob = probs_seq[time_step];
-
         float min_cutoff = -NUM_FLT_INF;
         bool full_beam = false;
         if (ext_scorer != nullptr) {
@@ -296,18 +295,28 @@ std::vector<std::pair<double, std::string>> ctc_beam_search_kw_decoder(
                         float score = 0.0;
                         std::vector<std::string> ngram;
                         ngram = ext_scorer->make_ngram(prefix_to_score);
-                        
-                        std::vector<int> str;                        
+
+                        std::vector<int> str;
                         str = ext_scorer->get_string(prefix_to_score);
 
-                        score = ext_scorer->get_log_cond_prob(ngram) * ext_scorer->alpha + ext_scorer->get_kw_score(str) * ext_scorer->gamma;                                                                     
+                        float score_lm = ext_scorer->get_log_cond_prob(ngram) * ext_scorer->alpha;
+                        std::pair <double, int> kw_result = ext_scorer->get_kw_score(str);
 
+                        float score_kw =  (kw_result.first - kw_result.second) * ext_scorer->gamma;
+
+                        score = score_lm + score_kw;
                         log_p += score;
                         log_p += ext_scorer->beta;
+
+                        /*
+                        if (kw_result.second > 0)
+                            log_p = log_sub_exp(log_p, 1.0f*kw_result.second); TODO This is correct, but slows down dramatically
+                        */
+
                     }
                     prefix_new->log_prob_nb_cur =
                         log_sum_exp(prefix_new->log_prob_nb_cur, log_p);
-                    
+
                 }
             }  // end of loop over prefix
         }    // end of loop over vocabulary
@@ -447,7 +456,7 @@ void BeamDecoder::reset(bool keep_offset /*default = false*/, bool keep_words /*
   }
   root = new PathTrie();
   root->score = root->log_prob_b_prev = 0.0;
-  
+
   prefixes.clear();
   prefixes.push_back(root);
 
@@ -559,7 +568,7 @@ std::vector<std::pair<double, std::string>> BeamDecoder::decode(const std::vecto
             std::vector<std::string> ngram;
             ngram = ext_scorer->make_ngram(prefix_to_score);
             score = ext_scorer->get_log_cond_prob(ngram) * ext_scorer->alpha;
-            
+
             log_p += score;
             log_p += ext_scorer->beta;
           }
@@ -623,6 +632,7 @@ ctc_beam_search_decoder_batch(
 
   // enqueue the tasks of decoding
   std::vector<std::future<std::vector<std::pair<double, std::string>>>> res;
+
   for (size_t i = 0; i < batch_size; ++i) {
     res.emplace_back(pool.enqueue(ctc_beam_search_decoder,
                                   probs_split[i],
@@ -655,7 +665,8 @@ ctc_beam_search_kw_decoder_batch(
     ThreadPool pool(num_processes);
     // number of samples
     size_t batch_size = probs_split.size();
-
+    //freopen("beam_output.txt", "w", stdout);
+    //std::cout << "HELLOOO";
     // enqueue the tasks of decoding
     std::vector<std::future<std::vector<std::pair<double, std::string>>>> res;
     for (size_t i = 0; i < batch_size; ++i) {

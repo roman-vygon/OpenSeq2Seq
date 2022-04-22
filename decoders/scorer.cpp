@@ -3,15 +3,15 @@
 #include <unistd.h>
 #include <iostream>
 
-#include "lm/config.hh"
-#include "lm/model.hh"
-#include "lm/state.hh"
-#include "util/string_piece.hh"
-#include "util/tokenize_piece.hh"
-
+#include "kenlm/lm/config.hh"
+#include "kenlm/lm/model.hh"
+#include "kenlm/lm/state.hh"
+#include "kenlm/util/string_piece.hh"
+#include "kenlm/util/tokenize_piece.hh"
 #include "decoder_utils.h"
 
 using namespace lm::ngram;
+//using namespace lm;
 
 Scorer::Scorer(double alpha,
                double beta,
@@ -416,8 +416,8 @@ std::vector<int> KWScorer::get_string(PathTrie* prefix) {
     std::vector<int> ans;
     PathTrie* current_node = prefix;
     PathTrie* new_node = nullptr;
-
-    while (true) {
+    ans.push_back(current_node->character);
+    while (ans.size() <= MAX_KEYWORD_LENGTH) {
         std::vector<int> prefix_vec;
 
         if (is_character_based_) {
@@ -455,10 +455,10 @@ bool KWScorer::leaf_node(int state) {
     return (base[state] == -2);
 }
 
-double KWScorer::get_kw_score(std::vector<int> str) {
+std::pair<double, int> KWScorer::get_kw_score(std::vector<int> str) {
     int state = 0;
-    double score = 0;
-    int current = 0;
+    double current = 0;
+    int subtract = 0;
     for (int i = 0; i < str.size(); ++i)
     {
         int new_state = get_transition(state, str[i]);
@@ -466,12 +466,14 @@ double KWScorer::get_kw_score(std::vector<int> str) {
         if (new_state != -1)
         {
             state = new_state;
+            subtract = 0;
             ++current;
         }
         else
         {
-            if (leaf_node(state))            
-                score += current;
+            if (!leaf_node(state))
+                subtract = current;
+
             current = 0;
 
             new_state = get_transition(0, str[i]);
@@ -482,11 +484,13 @@ double KWScorer::get_kw_score(std::vector<int> str) {
             }
             else
                state = 0;
-        }        
+        }
 
     }
-    score += current;
-    return score;
+    if (current > 0)
+        current = 1;
+
+    return {current, subtract};
 }
 
 void KWScorer::fill_dictionary(bool add_space) {

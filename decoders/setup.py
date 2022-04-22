@@ -116,7 +116,7 @@ decoders_module = [
 
 setup(
     name='ctc_decoders',
-    version='1.1',
+    version='1.2rc1',
     description="""CTC decoders""",
     ext_modules=decoders_module,
     py_modules=['ctc_decoders', 'swig_decoders'], )

@@ -6,10 +6,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "lm/enumerate_vocab.hh"
-#include "lm/virtual_interface.hh"
-#include "lm/word_index.hh"
-#include "util/string_piece.hh"
+#include "kenlm/lm/enumerate_vocab.hh"
+#include "kenlm/lm/virtual_interface.hh"
+#include "kenlm/lm/word_index.hh"
+#include "kenlm/util/string_piece.hh"
 
 #include "path_trie.h"
 
@@ -17,6 +17,7 @@ const double OOV_SCORE = -1000.0;
 const std::string START_TOKEN = "<s>";
 const std::string UNK_TOKEN = "<unk>";
 const std::string END_TOKEN = "</s>";
+const int MAX_KEYWORD_LENGTH = 20;
 
 // Implement a callback to retrive the dictionary of language model.
 class RetriveStrEnumerateVocab : public lm::EnumerateVocab {
@@ -137,8 +138,8 @@ public:
     void reset_params(float alpha, float beta, float gamma);
 
     int get_transition(int state, int character);
-    
-    
+
+
 
     bool leaf_node(int state);
 
@@ -147,7 +148,7 @@ public:
 
     std::vector<int> get_string(PathTrie* prefix);
 
-    double get_kw_score(std::vector<int> str);
+    std::pair<double, int> get_kw_score(std::vector<int> str);
     // trransform the labels in index to the vector of words (word based lm) or
     // the vector of characters (character based lm)
     std::vector<std::string> split_labels(const std::vector<int>& labels);
