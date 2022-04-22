@@ -12,7 +12,7 @@ std::vector<std::pair<size_t, float>> get_pruned_log_probs(
   for (size_t i = 0; i < prob_step.size(); ++i) {
     prob_idx.push_back(std::pair<int, double>(i, prob_step[i]));
   }
-  // pruning of vacobulary
+  // pruning of vocabulary
   size_t cutoff_len = prob_step.size();
   if (cutoff_prob < 1.0 || cutoff_top_n < cutoff_len) {
     std::sort(
@@ -87,6 +87,55 @@ std::vector<std::pair<double, std::string>> get_beam_search_result(
   return output_vecs;
 }
 
+std::vector<std::pair<double, std::string>> get_beam_search_result_kw(
+    const std::vector<PathTrie*>& prefixes,
+    const std::vector<std::string>& vocabulary,
+    size_t beam_size,
+    std::vector<std::tuple<std::string, uint32_t, uint32_t>>& wordlist) {
+    // allow for the post processing
+    std::vector<PathTrie*> space_prefixes;
+    if (space_prefixes.empty()) {
+        for (size_t i = 0; i < beam_size && i < prefixes.size(); ++i) {
+            space_prefixes.push_back(prefixes[i]);
+        }
+    }
+
+    std::sort(space_prefixes.begin(), space_prefixes.end(), prefix_compare);
+    std::vector<std::pair<double, std::string>> output_vecs;
+    std::vector<uint32_t> timestamps;
+    for (size_t i = 0; i < beam_size && i < space_prefixes.size(); ++i) {
+        std::vector<int> output;
+        // request timestamp only for best result
+        space_prefixes[i]->get_path_vec(output, i == 0 ? &timestamps : nullptr);
+        // convert index to string
+        std::string output_str;
+        for (size_t j = 0; j < output.size(); j++) {
+            output_str += vocabulary[output[j]];
+        }
+        std::pair<double, std::string> output_pair(space_prefixes[i]->score,
+            output_str);
+        output_vecs.emplace_back(output_pair);
+    }
+
+    // update word list with word and corresponding start & end times
+    wordlist.clear();
+    if (output_vecs[0].second.size() > 0) {
+        int ts_idx = 0;
+        char* saveptr;
+        char transcript[output_vecs[0].second.size() + 1];
+        strcpy(transcript, output_vecs[0].second.c_str());
+        char* token = strtok_r(transcript, " ", &saveptr);
+        while (token != NULL) {
+            std::tuple<std::string, uint32_t, uint32_t> word(std::string(token), timestamps[ts_idx], timestamps[ts_idx + 1]);
+            wordlist.emplace_back(word);
+            token = strtok_r(NULL, " ", &saveptr);
+            ts_idx += 2;
+        }
+    }
+
+    return output_vecs;
+}
+
 size_t get_utf8_str_len(const std::string &str) {
   size_t str_len = 0;
   for (char c : str) {
@@ -145,6 +194,7 @@ bool prefix_compare(const PathTrie *x, const PathTrie *y) {
     return x->score > y->score;
   }
 }
+
 
 void add_word_to_fst(const std::vector<int> &word,
                      fst::StdVectorFst *dictionary) {

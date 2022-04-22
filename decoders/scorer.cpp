@@ -228,3 +228,307 @@ void Scorer::fill_dictionary(bool add_space) {
   fst::Minimize(new_dict);
   this->dictionary = new_dict;
 }
+
+KWScorer::KWScorer(double alpha,
+    double beta,
+    float gamma,
+    const std::string& lm_path,
+    const std::vector<std::string>& vocab_list,
+    const std::vector<int>& base,
+    const std::vector<int>& check) {
+    this->alpha = alpha;
+    this->beta = beta;
+    this->gamma = gamma;
+    this->base = base;
+    this->check = check;
+
+    dictionary = nullptr;
+    is_character_based_ = true;
+    language_model_ = nullptr;
+
+    max_order_ = 0;
+    dict_size_ = 0;
+    SPACE_ID_ = -1;
+
+    setup(lm_path, vocab_list);
+}
+
+KWScorer::~KWScorer() {
+    if (language_model_ != nullptr) {
+        delete static_cast<lm::base::Model*>(language_model_);
+    }
+    if (dictionary != nullptr) {
+        delete static_cast<fst::StdVectorFst*>(dictionary);
+    }
+}
+
+void KWScorer::setup(const std::string& lm_path,
+    const std::vector<std::string>& vocab_list) {
+    // load language model
+    KWScorer::load_lm(lm_path);
+    // set char map for scorer
+    set_char_map(vocab_list);
+    // fill the dictionary for FST
+    if (!is_character_based()) {
+        fill_dictionary(true);
+    }
+}
+
+void KWScorer::load_lm(const std::string& lm_path) {
+    const char* filename = lm_path.c_str();
+    VALID_CHECK_EQ(access(filename, F_OK), 0, "Invalid language model path");
+
+    RetriveStrEnumerateVocab enumerate;
+    lm::ngram::Config config;
+    config.enumerate_vocab = &enumerate;
+    language_model_ = lm::ngram::LoadVirtual(filename, config);
+    max_order_ = static_cast<lm::base::Model*>(language_model_)->Order();
+    vocabulary_ = enumerate.vocabulary;
+    for (size_t i = 0; i < vocabulary_.size(); ++i) {
+        if (is_character_based_ && vocabulary_[i] != UNK_TOKEN &&
+            vocabulary_[i] != START_TOKEN && vocabulary_[i] != END_TOKEN &&
+            get_utf8_str_len(enumerate.vocabulary[i]) > 1) {
+            is_character_based_ = false;
+        }
+    }
+}
+
+double KWScorer::get_log_cond_prob(const std::vector<std::string>& words) {
+    lm::base::Model* model = static_cast<lm::base::Model*>(language_model_);
+    double cond_prob;
+    lm::ngram::State state, tmp_state, out_state;
+    // avoid to inserting <s> in begin
+    model->NullContextWrite(&state);
+    for (size_t i = 0; i < words.size(); ++i) {
+        lm::WordIndex word_index = model->BaseVocabulary().Index(words[i]);
+        // encounter OOV
+        if (word_index == 0) {
+            return OOV_SCORE;
+        }
+        cond_prob = model->BaseScore(&state, word_index, &out_state);
+        tmp_state = state;
+        state = out_state;
+        out_state = tmp_state;
+    }
+    // return  log10 prob
+    return cond_prob;
+}
+
+double KWScorer::get_sent_log_prob(const std::vector<std::string>& words) {
+    std::vector<std::string> sentence;
+    if (words.size() == 0) {
+        for (size_t i = 0; i < max_order_; ++i) {
+            sentence.push_back(START_TOKEN);
+        }
+    }
+    else {
+        for (size_t i = 0; i < max_order_ - 1; ++i) {
+            sentence.push_back(START_TOKEN);
+        }
+        sentence.insert(sentence.end(), words.begin(), words.end());
+    }
+    sentence.push_back(END_TOKEN);
+    return get_log_prob(sentence);
+}
+
+double KWScorer::get_log_prob(const std::vector<std::string>& words) {
+    assert(words.size() > max_order_);
+    double score = 0.0;
+    for (size_t i = 0; i < words.size() - max_order_ + 1; ++i) {
+        std::vector<std::string> ngram(words.begin() + i,
+            words.begin() + i + max_order_);
+        score += get_log_cond_prob(ngram);
+    }
+    return score;
+}
+
+
+void KWScorer::reset_params(float alpha, float beta, float gamma) {
+    this->alpha = alpha;
+    this->beta = beta;
+    this->gamma = gamma;
+}
+
+std::vector<std::string> KWScorer::split_labels(const std::vector<int>& labels) {
+    if (labels.empty()) return {};
+
+    std::string s = vec2str(labels);
+    std::vector<std::string> words;
+    if (is_character_based_) {
+        words = split_utf8_str(s);
+    }
+    else {
+        words = split_str(s, " ");
+    }
+    return words;
+}
+
+void KWScorer::set_char_map(const std::vector<std::string>& char_list) {
+    char_list_ = char_list;
+    char_map_.clear();
+
+    // Set the char map for the FST for spelling correction
+    for (size_t i = 0; i < char_list_.size(); i++) {
+        if (char_list_[i] == " ") {
+            SPACE_ID_ = i;
+        }
+        // The initial state of FST is state 0, hence the index of chars in
+        // the FST should start from 1 to avoid the conflict with the initial
+        // state, otherwise wrong decoding results would be given.
+        char_map_[char_list_[i]] = i + 1;
+    }
+}
+
+std::vector<std::string> KWScorer::make_ngram(PathTrie* prefix) {
+    std::vector<std::string> ngram;
+    PathTrie* current_node = prefix;
+    PathTrie* new_node = nullptr;
+
+    for (int order = 0; order < max_order_; order++) {
+        std::vector<int> prefix_vec;
+
+        if (is_character_based_) {
+            new_node = current_node->get_path_vec(prefix_vec, SPACE_ID_, 1);
+            current_node = new_node;
+        }
+        else {
+            new_node = current_node->get_path_vec(prefix_vec, SPACE_ID_);
+            current_node = new_node->parent;  // Skipping spaces
+        }
+
+        // reconstruct word
+        std::string word = vec2str(prefix_vec);
+        ngram.push_back(word);
+
+        if (new_node->character == -1) {
+            // No more spaces, but still need order
+            for (int i = 0; i < max_order_ - order - 1; i++) {
+                ngram.push_back(START_TOKEN);
+            }
+            break;
+        }
+    }
+    std::reverse(ngram.begin(), ngram.end());
+    return ngram;
+}
+
+std::vector<int> KWScorer::get_string(PathTrie* prefix) {
+    std::vector<int> ans;
+    PathTrie* current_node = prefix;
+    PathTrie* new_node = nullptr;
+
+    while (true) {
+        std::vector<int> prefix_vec;
+
+        if (is_character_based_) {
+            new_node = current_node->get_path_vec(prefix_vec, SPACE_ID_, 1);
+            current_node = new_node;
+        }
+        else {
+            new_node = current_node->get_path_vec(prefix_vec, SPACE_ID_);
+            current_node = new_node->parent;  // Skipping spaces
+        }
+
+        if (new_node->character == -1)
+            break;
+        else
+            ans.push_back(new_node->character);
+    }
+    std::reverse(ans.begin(), ans.end());
+    return ans;
+}
+
+
+
+int KWScorer::get_transition(int state, int character) {
+    int t = base[state] + character;
+    if (t >= check.size())
+        return -1;
+    else
+        if (check[t] != state)
+            return -1;
+        else
+            return t;
+}
+
+bool KWScorer::leaf_node(int state) {
+    return (base[state] == -2);
+}
+
+double KWScorer::get_kw_score(std::vector<int> str) {
+    int state = 0;
+    double score = 0;
+    int current = 0;
+    for (int i = 0; i < str.size(); ++i)
+    {
+        int new_state = get_transition(state, str[i]);
+
+        if (new_state != -1)
+        {
+            state = new_state;
+            ++current;
+        }
+        else
+        {
+            if (leaf_node(state))            
+                score += current;
+            current = 0;
+
+            new_state = get_transition(0, str[i]);
+            if (new_state != -1)
+            {
+                state = new_state;
+                current = 1;
+            }
+            else
+               state = 0;
+        }        
+
+    }
+    score += current;
+    return score;
+}
+
+void KWScorer::fill_dictionary(bool add_space) {
+    fst::StdVectorFst dictionary;
+    // For each unigram convert to ints and put in trie
+    int dict_size = 0;
+    for (const auto& word : vocabulary_) {
+        bool added = add_word_to_dictionary(
+            word, char_map_, add_space, SPACE_ID_ + 1, &dictionary);
+        dict_size += added ? 1 : 0;
+    }
+
+    dict_size_ = dict_size;
+
+    /* Simplify FST
+
+     * This gets rid of "epsilon" transitions in the FST.
+     * These are transitions that don't require a string input to be taken.
+     * Getting rid of them is necessary to make the FST determinisitc, but
+     * can greatly increase the size of the FST
+     */
+    fst::RmEpsilon(&dictionary);
+    fst::StdVectorFst* new_dict = new fst::StdVectorFst;
+
+    /* This makes the FST deterministic, meaning for any string input there's
+     * only one possible state the FST could be in.  It is assumed our
+     * dictionary is deterministic when using it.
+     * (lest we'd have to check for multiple transitions at each state)
+     */
+    fst::Determinize(dictionary, new_dict);
+
+    /* Finds the simplest equivalent fst. This is unnecessary but decreases
+     * memory usage of the dictionary
+     */
+    fst::Minimize(new_dict);
+    this->dictionary = new_dict;
+}
+
+std::string KWScorer::vec2str(const std::vector<int>& input) {
+    std::string word;
+    for (auto ind : input) {
+        word += char_list_[ind];
+    }
+    return word;
+}

@@ -9,7 +9,7 @@ const float NUM_FLT_INF = std::numeric_limits<float>::max();
 const float NUM_FLT_MIN = std::numeric_limits<float>::min();
 
 // inline function for validation check
-inline void check(
+inline void val_check(
     bool x, const char *expr, const char *file, int line, const char *err) {
   if (!x) {
     std::cout << "[" << file << ":" << line << "] ";
@@ -18,7 +18,7 @@ inline void check(
 }
 
 #define VALID_CHECK(x, info) \
-  check(static_cast<bool>(x), #x, __FILE__, __LINE__, info)
+  val_check(static_cast<bool>(x), #x, __FILE__, __LINE__, info)
 #define VALID_CHECK_EQ(x, y, info) VALID_CHECK((x) == (y), info)
 #define VALID_CHECK_GT(x, y, info) VALID_CHECK((x) > (y), info)
 #define VALID_CHECK_LT(x, y, info) VALID_CHECK((x) < (y), info)
@@ -47,6 +47,28 @@ T log_sum_exp(const T &x, const T &y) {
   T xmax = std::max(x, y);
   return std::log(std::exp(x - xmax) + std::exp(y - xmax)) + xmax;
 }
+// Return the difference of two probabilities in log scale
+template <typename T>
+T log_sub_exp(const T& x, const T& y) {
+    if (x <= y)
+        // error!! computing the log of a negative number
+        if (y == -std::numeric_limits<T>::max())
+            return x;
+    return x + log1p(-exp(y - x));
+}
+// Return the product of two probabilities in log scale
+template <typename T>
+T log_prod_exp(const T& x, const int& y) {
+    if (y == 0)
+        return 0;
+
+    T ans = x;
+    for (int i = 0; i < y - 1; ++i)
+        ans = log_sum_exp(ans, x);
+
+    //TODO this can be implemented through powers of 2
+    return ans;
+}
 
 // Get pruned probability vector for each time step's beam search
 std::vector<std::pair<size_t, float>> get_pruned_log_probs(
@@ -61,8 +83,15 @@ std::vector<std::pair<double, std::string>> get_beam_search_result(
     size_t beam_size,
     std::vector<std::tuple<std::string, uint32_t, uint32_t>>& wordlist);
 
+std::vector<std::pair<double, std::string>> get_beam_search_result_kw(
+    const std::vector<PathTrie*>& prefixes,
+    const std::vector<std::string>& vocabulary,
+    size_t beam_size,
+    std::vector<std::tuple<std::string, uint32_t, uint32_t>>& wordlist);
+
 // Functor for prefix comparsion
 bool prefix_compare(const PathTrie *x, const PathTrie *y);
+
 
 /* Get length of utf8 encoding string
  * See: http://stackoverflow.com/a/4063229

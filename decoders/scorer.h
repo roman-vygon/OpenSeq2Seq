@@ -109,4 +109,88 @@ private:
   std::vector<std::string> vocabulary_;
 };
 
+class KWScorer {
+public:
+    KWScorer(double alpha,
+        double beta,
+        float gamma,
+        const std::string& lm_path,
+        const std::vector<std::string>& vocabulary,
+        const std::vector<int>& base,
+        const std::vector<int>& check);
+    ~KWScorer();
+
+    double get_log_cond_prob(const std::vector<std::string>& words);
+
+    double get_sent_log_prob(const std::vector<std::string>& words);
+
+    // return the max order
+    size_t get_max_order() const { return max_order_; }
+
+    // return the dictionary size of language model
+    size_t get_dict_size() const { return dict_size_; }
+
+    // retrun true if the language model is character based
+    bool is_character_based() const { return is_character_based_; }
+
+    // reset params alpha & beta
+    void reset_params(float alpha, float beta, float gamma);
+
+    int get_transition(int state, int character);
+    
+    
+
+    bool leaf_node(int state);
+
+    // make ngram for a given prefix
+    std::vector<std::string> make_ngram(PathTrie* prefix);
+
+    std::vector<int> get_string(PathTrie* prefix);
+
+    double get_kw_score(std::vector<int> str);
+    // trransform the labels in index to the vector of words (word based lm) or
+    // the vector of characters (character based lm)
+    std::vector<std::string> split_labels(const std::vector<int>& labels);
+
+    // language model weight
+    double alpha;
+    // word insertion weight
+    double beta;
+    float gamma;
+    // pointer to the dictionary of FST
+    void* dictionary;
+
+protected:
+    // necessary setup: load language model, set char map, fill FST's dictionary
+    void setup(const std::string& lm_path,
+        const std::vector<std::string>& vocab_list);
+
+    // load language model from given path
+    void load_lm(const std::string& lm_path);
+
+    // fill dictionary for FST
+    void fill_dictionary(bool add_space);
+
+    // set char map
+    void set_char_map(const std::vector<std::string>& char_list);
+
+    double get_log_prob(const std::vector<std::string>& words);
+
+    // translate the vector in index to string
+    std::string vec2str(const std::vector<int>& input);
+
+private:
+    void* language_model_;
+    bool is_character_based_;
+    size_t max_order_;
+    size_t dict_size_;
+    std::vector<int> check;
+    std::vector <int> base;
+    int SPACE_ID_;
+    std::vector<std::string> char_list_;
+    std::unordered_map<std::string, int> char_map_;
+
+    std::vector<std::string> vocabulary_;
+};
+
 #endif  // SCORER_H_

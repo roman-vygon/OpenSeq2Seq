@@ -75,8 +75,6 @@ private:
   std::vector<PathTrie *> prefixes;
 };
 
-
-
 /* CTC Beam Search Decoder for batch data
 
  * Parameters:
@@ -103,5 +101,16 @@ ctc_beam_search_decoder_batch(
     double cutoff_prob = 1.0,
     size_t cutoff_top_n = 40,
     Scorer *ext_scorer = nullptr);
+
+
+std::vector<std::vector<std::pair<double, std::string>>>
+ctc_beam_search_kw_decoder_batch(
+    const std::vector<std::vector<std::vector<double>>>& probs_split,
+    const std::vector<std::string>& vocabulary,
+    size_t beam_size,
+    size_t num_processes,
+    double cutoff_prob = 1.0,
+    size_t cutoff_top_n = 40,
+    KWScorer* ext_scorer = nullptr);
 
 #endif  // CTC_BEAM_SEARCH_DECODER_H_
